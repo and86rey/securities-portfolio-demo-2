@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Securities Portfolio Credit Exposure Demo</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.pyodide.org/v0.23.4/full/pyodide.js"></script>
+  <style>
+    body { background-color: #f9fafb; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+    .ticker-entry { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-3xl font-bold text-gray-800 mb-6">Securities Portfolio Credit Exposure Demo</h1>
+
+    <!-- Portfolio Input Section -->
+    <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">Build Your Portfolio (Up to 10 Tickers)</h2>
+      <p class="text-sm text-gray-500 mb-4">Enter ticker symbols (e.g., AAPL, MSFT) and weights or face amounts.</p>
+      <div id="tickerContainer">
+        <div class="ticker-entry">
+          <input type="text" class="border rounded p-2 w-1/4" placeholder="Enter Ticker (e.g., AAPL)" name="ticker">
+          <select class="border rounded p-2" name="inputType">
+            <option value="weight">Weight (%)</option>
+            <option value="famt">Face Amount (FAMT)</option>
+          </select>
+          <input type="number" class="border rounded p-2 w-1/4" placeholder="Enter Value" name="value" min="0">
+          <button class="text-red-600 hover:text-red-800 remove-btn hidden">Remove</button>
+        </div>
+      </div>
+      <button id="addTicker" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mt-4">Add Another Ticker</button>
+      <button id="fetchData" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 mt-4 ml-4">Fetch Security Data</button>
+      <button id="calculateExposure" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mt-4 ml-4">Calculate Exposure</button>
+      <button id="analyzeVolatility" class="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 mt-4 ml-4">Analyze Volatility</button>
+      <button id="runSimulation" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 mt-4 ml-4">Run Exposure Simulation</button>
+    </div>
+
+    <!-- Security Metrics Table -->
+    <div id="metricsTable" class="bg-white p-6 rounded-lg shadow-md mb-6 hidden">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">Security Metrics</h2>
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 border">Ticker</th>
+            <th class="p-2 border">Price ($)</th>
+            <th class="p-2 border">Beta</th>
+            <th class="p-2 border">P/E Ratio</th>
+            <th class="p-2 border">Debt-to-Equity</th>
+            <th class="p-2 border">Risk Score (%)</th>
+          </tr>
+        </thead>
+        <tbody id="metricsBody"></tbody>
+      </table>
+    </div>
+
+    <!-- Volatility Analysis -->
+    <div id="volatilityAnalysis" class="bg-white p-6 rounded-lg shadow-md mb-6 hidden">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">Volatility Analysis (Last 30 Days)</h2>
+      <table class="w-full text-left border-collapse mb-4">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 border">Ticker</th>
+            <th class="p-2 border">Volatility (%)</th>
+            <th class="p-2 border">Volatility-Adjusted Risk Score (%)</th>
+          </tr>
+        </thead>
+        <tbody id="volatilityBody"></tbody>
+      </table>
+      <canvas id="volatilityChart" height="100" class="mt-4"></canvas>
+    </div>
+
+    <!-- Exposure Results -->
+    <div id="results" class="bg-white p-6 rounded-lg shadow-md mb-6 hidden">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">Credit Exposure Analysis</h2>
+      <div class="mb-4">
+        <p class="text-gray-600">Total Credit Exposure (Today):</p>
+        <p id="todayExposure" class="text-2xl font-bold text-blue-600">$0M</p>
+      </div>
+      <table class="w-full text-left border-collapse mb-4">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="p-2 border">Period</th>
+            <th class="p-2 border">Exposure ($M)</th>
+            <th class="p-2 border">Change vs. Today</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="p-2 border">Yesterday</td>
+            <td id="yesterdayExposure" class="p-2 border">$0M</td>
+            <td id="yesterdayChange" class="p-2 border">0%</td>
+          </tr>
+          <tr>
+            <td class="p-2 border">T-7 Days</td>
+            <td id="t7Exposure" class="p-2 border">$0M</td>
+            <td id="t7Change" class="p-2 border">0%</td>
+          </tr>
+        </tbody>
+      </table>
+      <canvas id="exposureChart" height="100" class="mt-4"></canvas>
+    </div>
+
+    <!-- Simulation Results -->
+    <div id="simulationResults" class="bg-white p-6 rounded-lg shadow-md mb-6 hidden">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">Exposure Simulation (Monte Carlo, 1000 Runs)</h2>
+      <p class="text-gray-600 mb-2">Expected Exposure ($M):</p>
+      <p id="expectedExposure" class="text-xl font-bold text-blue-600">$0M</p>
+      <p class="text-gray-600 mb-2 mt-4">95% Confidence Interval:</p>
+      <p id="confidenceInterval" class="text-lg text-gray-700">[0, 0]</p>
+      <canvas id="simulationChart" height="100" class="mt-4"></canvas>
+    </div>
+
+    <!-- Service Description -->
+    <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+      <h2 class="text-xl font-semibold text-gray-700 mb-4">About This Demo</h2>
+      <p class="text-gray-600 mb-2">
+        The <strong>Securities Portfolio Credit Exposure Demo</strong> is a tool designed to help portfolio and credit risk managers analyze the credit exposure of a securities portfolio. It provides insights into risk metrics, volatility, and potential exposure under different scenarios.
+      </p>
+      <h3 class="text-lg font-semibold text-gray-700 mb-2">Key Features:</h3>
+      <ul class="list-disc list-inside text-gray-600 mb-4">
+        <li><strong>Security Data Fetching:</strong> Retrieve current price, beta, P/E ratio, and debt-to-equity for up to 10 tickers using Financial Modeling Prep (FMP).</li>
+        <li><strong>Volatility Analysis:</strong> Calculate 30-day historical volatility and adjust risk scores accordingly, using Yahoo Finance data.</li>
+        <li><strong>Exposure Calculation:</strong> Compute credit exposure for today, yesterday, and T-7 days, with historical data comparisons.</li>
+        <li><strong>Monte Carlo Simulation:</strong> Run 1000 simulations to estimate expected exposure and a 95% confidence interval.</li>
+      </ul>
+      <h3 class="text-lg font-semibold text-gray-700 mb-2">How to Use:</h3>
+      <ol class="list-decimal list-inside text-gray-600">
+        <li>Enter ticker symbols (e.g., AAPL for Apple, MSFT for Microsoft) and their weights (%) or face amounts (FAMT). Add up to 10 tickers.</li>
+        <li>Click <strong>Fetch Security Data</strong> to retrieve current metrics for the entered tickers.</li>
+        <li>Click <strong>Analyze Volatility</strong> to calculate 30-day volatility and adjust risk scores.</li>
+        <li>Click <strong>Calculate Exposure</strong> to compute credit exposure for today, yesterday, and T-7 days.</li>
+        <li>Click <strong>Run Exposure Simulation</strong> to perform a Monte Carlo simulation for future exposure estimates.</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    // Initialize Pyodide
+    let pyodide;
+    async function initializePyodide() {
+      pyodide = await loadPyodide();
+      await pyodide.loadPackage('micropip');
+      await pyodide.runPythonAsync(`
+        import micropip
+        await micropip.install('yfinance')
+        await micropip.install('numpy')
+      `);
+      console.log("Pyodide initialized with yfinance and numpy");
+    }
+    initializePyodide();
+
+    // Hardcoded FMP API Key (for testing only; secure this in production)
+    const FMP_API_KEY = 'WcXMJO2SufKTeiFKpSxxpBO1sO41uUQI';
+
+    // Manage Ticker Entries
+    const tickerContainer = document.getElementById('tickerContainer');
+    const addTickerBtn = document.getElementById('addTicker');
+    let tickerCount = 1;
+
+    addTickerBtn.addEventListener('click', () => {
+      if (tickerCount < 10) {
+        tickerCount++;
+        const newEntry = document.createElement('div');
+        newEntry.classList.add('ticker-entry');
+        newEntry.innerHTML = `
+          <input type="text" class="border rounded p-2 w-1/4" placeholder="Enter Ticker (e.g., AAPL)" name="ticker">
+          <select class="border rounded p-2" name="inputType">
+            <option value="weight">Weight (%)</option>
+            <option value="famt">Face Amount (FAMT)</option>
+          </select>
+          <input type="number" class="border rounded p-2 w-1/4" placeholder="Enter Value" name="value" min="0">
+          <button class="text-red-600 hover:text-red-800 remove-btn">Remove</button>
+        `;
+        tickerContainer.appendChild(newEntry);
+        updateRemoveButtons();
+      }
+      if (tickerCount === 10) addTickerBtn.disabled = true;
+    });
+
+    function updateRemoveButtons() {
+      const removeButtons = document.querySelectorAll('.remove-btn');
+      removeButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.parentElement.remove();
+          tickerCount--;
+          addTickerBtn.disabled = false;
+        });
+        btn.classList.toggle('hidden', tickerCount === 1);
+      });
+    }
+
+    // Fetch Security Data (Triggered by "Fetch Security Data" button)
+    const fetchDataBtn = document.getElementById('fetchData');
+    let securityData = [];
+
+    async function fetchSecurityData(ticker) {
+      try {
+        // Fetch current data from FMP
+        const profileResponse = await fetch(`https://financialmodelingprep.com/api/v3/profile/${ticker}?apikey=${FMP_API_KEY}`);
+        if (!profileResponse.ok) throw new Error(`Profile API error: ${profileResponse.status}`);
+        const profileData = await profileResponse.json();
+        const beta = profileData[0]?.beta || 1;
+
+        const metricsResponse = await fetch(`https://financialmodelingprep.com/api/v3/key-metrics/${ticker}?limit=1&apikey=${FMP_API_KEY}`);
+        if (!metricsResponse.ok) throw new Error(`Key Metrics API error: ${metricsResponse.status}`);
+        const metricsData = await metricsResponse.json();
+        const peRatio = metricsData[0]?.peRatio || 0;
+        const debtToEquity = metricsData[0]?.debtToEquity || 0;
+
+        const quoteResponse = await fetch(`https://financialmodelingprep.com/api/v3/quote/${ticker}?apikey=${FMP_API_KEY}`);
+        if (!quoteResponse.ok) throw new Error(`Quote API error: ${quoteResponse.status}`);
+        const quoteData = await quoteResponse.json();
+        const currentPrice = quoteData[0]?.price || 0;
+
+        // Fetch historical prices using yfinance
+        await pyodide.runPythonAsync(`
+          import yfinance as yf
+          from datetime import datetime, timedelta
+
+          # Define dates
+          today = datetime.now()
+          yesterday = today - timedelta(days=1)
+          t7 = today - timedelta(days=7)
+
+          # Fetch historical data
+          stock = yf.Ticker("${ticker}")
+          hist = stock.history(start=t7 - timedelta(days=1), end=today + timedelta(days=1))
+
+          # Get closing prices for specific dates
+          hist.index = hist.index.tz_localize(None)  # Remove timezone for comparison
+          today_str = today.strftime('%Y-%m-%d')
+          yesterday_str = yesterday.strftime('%Y-%m-%d')
+          t7_str = t7.strftime('%Y-%m-%d')
+
+          today_price = hist['Close'].get(today_str, hist['Close'].iloc[-1])
+          yesterday_price = hist['Close'].get(yesterday_str, hist['Close'].iloc[-2] if len(hist) > 1 else hist['Close'].iloc[-1])
+          t7_price = hist['Close'].get(t7_str, hist['Close'].iloc[0] if len(hist) > 0 else hist['Close'].iloc[-1])
+        `);
+        const todayPrice = await pyodide.globals.get('today_price');
+        const yesterdayPrice = await pyodide.globals.get('yesterday_price');
+        const t7Price = await pyodide.globals.get('t7_price');
+
+        // Use FMP price if yfinance fails
+        const price = todayPrice > 0 ? todayPrice : currentPrice;
+
+        // Calculate risk score for today
+        await pyodide.runPythonAsync(`
+          def calculate_risk_score(beta, debt_to_equity, pe_ratio):
+              score = beta * 5
+              if debt_to_equity > 1:
+                  score += 5
+              if pe_ratio > 30:
+                  score += 3
+              return round(score, 2)
+        `);
+        const riskScoreToday = await pyodide.runPythonAsync(`
+          calculate_risk_score(${beta}, ${debtToEquity}, ${peRatio})
+        `);
+
+        // Estimate historical risk scores based on price changes
+        const yesterdayRiskScore = (riskScoreToday * (yesterdayPrice / todayPrice)).toFixed(2);
+        const t7RiskScore = (riskScoreToday * (t7Price / todayPrice)).toFixed(2);
+
+        return {
+          ticker,
+          price,
+          beta,
+          peRatio,
+          debtToEquity,
+          riskScore: riskScoreToday,
+          yesterdayRiskScore: isFinite(yesterdayRiskScore) ? yesterdayRiskScore : riskScoreToday,
+          t7RiskScore: isFinite(t7RiskScore) ? t7RiskScore : riskScoreToday
+        };
+      } catch (error) {
+        console.error(`Error fetching data for ${ticker}:`, error.message);
+        return { ticker, price: 0, beta: 1, peRatio: 0, debtToEquity: 0, riskScore: 7, yesterdayRiskScore: 7, t7RiskScore: 7 };
+      }
+    }
+
+    fetchDataBtn.addEventListener('click', async () => {
+      const entries = document.querySelectorAll('.ticker-entry');
+      const tickers = [...new Set(
+        Array.from(entries)
+          .map(entry => entry.querySelector('input[name="ticker"]').value.trim().toUpperCase())
+          .filter(ticker => ticker.length > 0)
+      )];
+
+      if (tickers.length === 0) {
+        alert('Please enter at least one ticker symbol.');
+        return;
+      }
+
+      securityData = [];
+      for (const ticker of tickers) {
+        const data = await fetchSecurityData(ticker);
+        securityData.push(data);
+      }
+
+      // Populate Security Metrics Table
+      const metricsBody = document.getElementById('metricsBody');
+      metricsBody.innerHTML = '';
+      securityData.forEach(data => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td class="p-2 border">${data.ticker}</td>
+          <td class="p-2 border">$${data.price.toFixed(2)}</td>
+          <td class="p-2 border">${data.beta.toFixed(2)}</td>
+          <td class="p-2 border">${data.peRatio.toFixed(2)}</td>
+          <td class="p-2 border">${data.debtToEquity.toFixed(2)}</td>
+          <td class="p-2 border">${data.riskScore}%</td>
+        `;
+        metricsBody.appendChild(row);
+      });
+      document.getElementById('metricsTable').classList.remove('hidden');
+    });
+
+    // Analyze Volatility (Triggered by "Analyze Volatility" button)
+    const analyzeVolatilityBtn = document.getElementById('analyzeVolatility');
+    let volatilityData = [];
+    let volatilityChart;
+
+    analyzeVolatilityBtn.addEventListener('click', async () => {
+      if (securityData.length === 0) {
+        alert('Please fetch security data first by clicking "Fetch Security Data".');
+        return;
+      }
+
+      volatilityData = [];
+      for (const data of securityData) {
+        const ticker = data.ticker;
+        await pyodide.runPythonAsync(`
+          import yfinance as yf
+          import numpy as np
+          from datetime import datetime, timedelta
+
+          # Fetch historical data for the last 30 days
+          end_date = datetime.now()
+          start_date = end_date - timedelta(days=30)
+          stock = yf.Ticker("${ticker}")
+          hist = stock.history(start=start_date, end=end_date)
+
+          # Calculate daily returns
+          returns = hist['Close'].pct_change().dropna()
+
+          # Calculate annualized volatility (standard deviation of returns * sqrt(252))
+          volatility = np.std(returns) * np.sqrt(252) * 100  # In percentage
+        `);
+        const volatility = await pyodide.globals.get('volatility');
+        const adjustedRiskScore = await pyodide.runPythonAsync(`
+          risk_score = ${data.riskScore}
+          volatility = ${volatility}
+          # Adjust risk score based on volatility (simple scaling)
+          adjusted = risk_score * (1 + volatility / 100)
+          round(adjusted, 2)
+        `);
+
+        volatilityData.push({ ticker, volatility: volatility.toFixed(2), adjustedRiskScore });
+      }
+
+      // Populate Volatility Table
+      const volatilityBody = document.getElementById('volatilityBody');
+      volatilityBody.innerHTML = '';
+      volatilityData.forEach(data => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td class="p-2 border">${data.ticker}</td>
+          <td class="p-2 border">${data.volatility}%</td>
+          <td class="p-2 border">${data.adjustedRiskScore}%</td>
+        `;
+        volatilityBody.appendChild(row);
+      });
+
+      // Update Volatility Chart
+      if (volatilityChart) volatilityChart.destroy();
+      const ctxVol = document.getElementById('volatilityChart').getContext('2d');
+      volatilityChart = new Chart(ctxVol, {
+        type: 'bar',
+        data: {
+          labels: volatilityData.map(d => d.ticker),
+          datasets: [{
+            label: 'Volatility (%)',
+            data: volatilityData.map(d => d.volatility),
+            backgroundColor: 'rgba(255, 159, 64, 0.6)',
+            borderColor: 'rgba(255, 159, 64, 1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Volatility (%)' }
+            }
+          }
+        }
+      });
+
+      document.getElementById('volatilityAnalysis').classList.remove('hidden');
+    });
+
+    // Calculate Exposure (Triggered by "Calculate Exposure" button)
+    const calculateExposureBtn = document.getElementById('calculateExposure');
+    let exposureChart;
+
+    calculateExposureBtn.addEventListener('click', async () => {
+      if (securityData.length === 0) {
+        alert('Please fetch security data first by clicking "Fetch Security Data".');
+        return;
+      }
+
+      const entries = document.querySelectorAll('.ticker-entry');
+      let weightsToday = [];
+      let weightsYesterday = [];
+      let weightsT7 = [];
+      let totalWeight = 0;
+      let totalFamt = 0;
+
+      entries.forEach(entry => {
+        const ticker = entry.querySelector('input[name="ticker"]').value.trim().toUpperCase();
+        const inputType = entry.querySelector('select[name="inputType"]').value;
+        const value = parseFloat(entry.querySelector('input[name="value"]').value) || 0;
+
+        if (ticker && value > 0) {
+          const data = securityData.find(d => d.ticker === ticker);
+          if (!data) return; // Skip if ticker not found in securityData
+
+          const riskScoreToday = volatilityData.find(d => d.ticker === ticker)?.adjustedRiskScore || data.riskScore;
+          const riskScoreYesterday = data.yesterdayRiskScore;
+          const riskScoreT7 = data.t7RiskScore;
+
+          if (inputType === 'weight') {
+            weightsToday.push({ riskScore: riskScoreToday, weight: value });
+            weightsYesterday.push({ riskScore: riskScoreYesterday, weight: value });
+            weightsT7.push({ riskScore: riskScoreT7, weight: value });
+            totalWeight += value;
+          } else {
+            totalFamt += value;
+            weightsToday.push({ riskScore: riskScoreToday, famt: value });
+            weightsYesterday.push({ riskScore: riskScoreYesterday, famt: value });
+            weightsT7.push({ riskScore: riskScoreT7, famt: value });
+          }
+        }
+      });
+
+      // Normalize Weights if Using FAMT
+      if (totalFamt > 0) {
+        weightsToday = weightsToday.map(w => ({
+          riskScore: w.riskScore,
+          weight: (w.famt / totalFamt) * 100
+        }));
+        weightsYesterday = weightsYesterday.map(w => ({
+          riskScore: w.riskScore,
+          weight: (w.famt / totalFamt) * 100
+        }));
+        weightsT7 = weightsT7.map(w => ({
+          riskScore: w.riskScore,
+          weight: (w.famt / totalFamt) * 100
+        }));
+        totalWeight = 100;
+      }
+
+      // Validate Total Weight
+      if (totalWeight === 0) {
+        alert('Please enter at least one valid ticker with a weight or FAMT.');
+        return;
+      }
+      if (totalWeight !== 100 && totalFamt === 0) {
+        alert('Total weight must equal 100%. Current total: ' + totalWeight + '%');
+        return;
+      }
+
+      // Calculate exposure for Today, Yesterday, and T-7 Days
+      const riskScoresToday = weightsToday.map(w => w.riskScore);
+      const riskScoresYesterday = weightsYesterday.map(w => w.riskScore);
+      const riskScoresT7 = weightsT7.map(w => w.riskScore);
+      const weightValues = weightsToday.map(w => w.weight / 100);
+
+      await pyodide.runPythonAsync(`
+        def calculate_exposure(risk_scores, weights):
+            total = sum(score * weight for score, weight in zip(risk_scores, weights))
+            return round(total * 10, 2)  # Scale to $M
+      `);
+      const totalExposure = await pyodide.runPythonAsync(`
+        calculate_exposure([${riskScoresToday.join(',')}], [${weightValues.join(',')}])
+      `);
+      const yesterdayExposure = await pyodide.runPythonAsync(`
+        calculate_exposure([${riskScoresYesterday.join(',')}], [${weightValues.join(',')}])
+      `);
+      const t7Exposure = await pyodide.runPythonAsync(`
+        calculate_exposure([${riskScoresT7.join(',')}], [${weightValues.join(',')}])
+      `);
+
+      // Update Results
+      document.getElementById('todayExposure').textContent = `$${totalExposure}M`;
+      document.getElementById('yesterdayExposure').textContent = `$${yesterdayExposure}M`;
+      document.getElementById('yesterdayChange').textContent = `${(((yesterdayExposure - totalExposure) / totalExposure) * 100).toFixed(1)}%`;
+      document.getElementById('t7Exposure').textContent = `$${t7Exposure}M`;
+      document.getElementById('t7Change').textContent = `${(((t7Exposure - totalExposure) / totalExposure) * 100).toFixed(1)}%`;
+
+      // Show Results
+      document.getElementById('results').classList.remove('hidden');
+
+      // Update Exposure Chart
+      if (exposureChart) exposureChart.destroy();
+      const ctx = document.getElementById('exposureChart').getContext('2d');
+      exposureChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['T-7 Days', 'Yesterday', 'Today'],
+          datasets: [{
+            label: 'Credit Exposure ($M)',
+            data: [t7Exposure, yesterdayExposure, totalExposure],
+            backgroundColor: ['rgba(255, 99, 132, 0.6)', 'rgba(54, 162, 235, 0.6)', 'rgba(75, 192, 192, 0.6)'],
+            borderColor: ['rgba(255, 99, 132, 1)', 'rgba(54, 162, 235, 1)', 'rgba(75, 192, 192, 1)'],
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Exposure ($M)' }
+            }
+          }
+        }
+      });
+    });
+
+    // Run Monte Carlo Simulation (Triggered by "Run Exposure Simulation" button)
+    const runSimulationBtn = document.getElementById('runSimulation');
+    let simulationChart;
+
+    runSimulationBtn.addEventListener('click', async () => {
+      if (volatilityData.length === 0) {
+        alert('Please analyze volatility first by clicking "Analyze Volatility".');
+        return;
+      }
+
+      const entries = document.querySelectorAll('.ticker-entry');
+      let weights = [];
+      let totalWeight = 0;
+      let totalFamt = 0;
+
+      entries.forEach(entry => {
+        const ticker = entry.querySelector('input[name="ticker"]').value.trim().toUpperCase();
+        const inputType = entry.querySelector('select[name="inputType"]').value;
+        const value = parseFloat(entry.querySelector('input[name="value"]').value) || 0;
+
+        if (ticker && value > 0) {
+          const data = securityData.find(d => d.ticker === ticker);
+          if (!data) return;
+
+          const volData = volatilityData.find(d => d.ticker === ticker);
+          const riskScore = volData ? volData.adjustedRiskScore : data.riskScore;
+          const volatility = volData ? volData.volatility : 20; // Default volatility if not available
+
+          if (inputType === 'weight') {
+            weights.push({ riskScore, volatility, weight: value });
+            totalWeight += value;
+          } else {
+            totalFamt += value;
+            weights.push({ riskScore, volatility, famt: value });
+          }
+        }
+      });
+
+      // Normalize Weights if Using FAMT
+      if (totalFamt > 0) {
+        weights = weights.map(w => ({
+          riskScore: w.riskScore,
+          volatility: w.volatility,
+          weight: (w.famt / totalFamt) * 100
+        }));
+        totalWeight = 100;
+      }
+
+      if (totalWeight === 0) {
+        alert('Please enter at least one valid ticker with a weight or FAMT.');
+        return;
+      }
+      if (totalWeight !== 100 && totalFamt === 0) {
+        alert('Total weight must equal 100%. Current total: ' + totalWeight + '%');
+        return;
+      }
+
+      // Run Monte Carlo Simulation in Python
+      const riskScores = weights.map(w => w.riskScore);
+      const volatilities = weights.map(w => w.volatility);
+      const weightValues = weights.map(w => w.weight / 100);
+      await pyodide.runPythonAsync(`
+        import numpy as np
+
+        def monte_carlo_exposure(risk_scores, volatilities, weights, num_simulations=1000):
+            simulations = []
+            for _ in range(num_simulations):
+                # Simulate risk scores with volatility (normal distribution)
+                simulated_scores = [
+                    np.random.normal(score, vol/100 * score)
+                    for score, vol in zip(risk_scores, volatilities)
+                ]
+                # Calculate exposure for this simulation
+                exposure = sum(score * weight for score, weight in zip(simulated_scores, weights)) * 10
+                simulations.append(exposure)
+            simulations = np.array(simulations)
+            expected = np.mean(simulations)
+            ci_lower, ci_upper = np.percentile(simulations, [2.5, 97.5])
+            return expected, ci_lower, ci_upper, simulations.tolist()
+      `);
+      const simulationResult = await pyodide.runPythonAsync(`
+        expected, ci_lower, ci_upper, sims = monte_carlo_exposure(
+            [${riskScores.join(',')}], [${volatilities.join(',')}], [${weightValues.join(',')}], 1000
+        )
+        [expected, ci_lower, ci_upper, sims]
+      `);
+
+      const expectedExposure = simulationResult[0].toFixed(2);
+      const ciLower = simulationResult[1].toFixed(2);
+      const ciUpper = simulationResult[2].toFixed(2);
+      const simulations = simulationResult[3];
+
+      // Update Simulation Results
+      document.getElementById('expectedExposure').textContent = `$${expectedExposure}M`;
+      document.getElementById('confidenceInterval').textContent = `[$${ciLower}M, $${ciUpper}M]`;
+
+      // Update Simulation Chart (Histogram)
+      if (simulationChart) simulationChart.destroy();
+      const ctxSim = document.getElementById('simulationChart').getContext('2d');
+      const binSize = (Math.max(...simulations) - Math.min(...simulations)) / 20;
+      const bins = Array(20).fill(0);
+      simulations.forEach(value => {
+        const binIndex = Math.min(Math.floor((value - Math.min(...simulations)) / binSize), 19);
+        bins[binIndex]++;
+      });
+      const binLabels = Array.from({ length: 20 }, (_, i) => {
+        const start = (Math.min(...simulations) + i * binSize).toFixed(1);
+        const end = (Math.min(...simulations) + (i + 1) * binSize).toFixed(1);
+        return `${start}-${end}`;
+      });
+
+      simulationChart = new Chart(ctxSim, {
+        type: 'bar',
+        data: {
+          labels: binLabels,
+          datasets: [{
+            label: 'Frequency',
+            data: bins,
+            backgroundColor: 'rgba(255, 99, 132, 0.6)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: {
+            x: {
+              title: { display: true, text: 'Exposure ($M)' }
+            },
+            y: {
+              title: { display: true, text: 'Frequency' }
+            }
+          }
+        }
+      });
+
+      document.getElementById('simulationResults').classList.remove('hidden');
+    });
+  </script>
+</body>
+</html>
