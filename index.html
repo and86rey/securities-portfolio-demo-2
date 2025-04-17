@@ -6,7 +6,7 @@
   <title>Securities Portfolio Credit Exposure Demo</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-  <script src="https://cdn.pyodide.org/v0.23.4/full/pyodide.js"></script>
+  <script src="https://cdn.pyodide.org/v0.23.4/full/pyodide.js" onload="initializePyodide()"></script>
   <style>
     body { background-color: #f9fafb; }
     .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
@@ -32,13 +32,11 @@
           <button class="text-red-600 hover:text-red-800 remove-btn hidden">Remove</button>
         </div>
       </div>
-      <div class="flex flex-wrap gap-4 mt-4">
-        <button id="addTicker" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Add Another Ticker</button>
-        <button id="fetchData" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">Fetch Security Data</button>
-        <button id="calculateExposure" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Calculate Exposure</button>
-        <button id="analyzeVolatility" class="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700">Analyze Volatility</button>
-        <button id="runSimulation" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Run Exposure Simulation</button>
-      </div>
+      <button id="addTicker" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mt-4">Add Another Ticker</button>
+      <button id="fetchData" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 mt-4 ml-4">Fetch Security Data</button>
+      <button id="calculateExposure" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mt-4 ml-4">Calculate Exposure</button>
+      <button id="analyzeVolatility" class="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 mt-4 ml-4">Analyze Volatility</button>
+      <button id="runSimulation" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 mt-4 ml-4">Run Exposure Simulation</button>
     </div>
 
     <!-- Security Metrics Table -->
@@ -143,21 +141,31 @@
   <script>
     // Initialize Pyodide
     let pyodide;
+    let pyodideReady = false;
+
     async function initializePyodide() {
-      pyodide = await loadPyodide();
-      await pyodide.loadPackage('micropip');
-      await pyodide.runPythonAsync(`
-        import micropip
-        await micropip.install('yfinance')
-        await micropip.install('numpy')
-      `);
-      console.log("Pyodide initialized with yfinance and numpy");
+      try {
+        if (typeof loadPyodide === 'undefined') {
+          throw new Error('loadPyodide is not defined. Pyodide script may have failed to load.');
+        }
+        pyodide = await loadPyodide();
+        await pyodide.loadPackage('micropip');
+        await pyodide.runPythonAsync(`
+          import micropip
+          await micropip.install('yfinance')
+          await micropip.install('numpy')
+        `);
+        pyodideReady = true;
+        console.log("Pyodide initialized with yfinance and numpy");
+      } catch (error) {
+        console.error("Failed to initialize Pyodide:", error);
+        alert("Failed to initialize Pyodide. Some features may not work. Please check the console for details.");
+      }
     }
-    initializePyodide();
 
     // Hardcoded FMP API Key (for testing only; secure this in production)
     const FMP_API_KEY = 'WcXMJO2SufKTeiFKpSxxpBO1sO41uUQI';
-    
+
     // Manage Ticker Entries
     const tickerContainer = document.getElementById('tickerContainer');
     const addTickerBtn = document.getElementById('addTicker');
@@ -208,60 +216,69 @@
         const beta = profileData[0]?.beta || 1;
 
         const metricsResponse = await fetch(`https://financialmodelingprep.com/api/v3/key-metrics/${ticker}?limit=1&apikey=${FMP_API_KEY}`);
-        if (!metricsResponse.ok) throw new Error(`Key Metrics API error: ${profileResponse.status}`);
+        if (!metricsResponse.ok) throw new Error(`Key Metrics API error: ${metricsResponse.status}`);
         const metricsData = await metricsResponse.json();
         const peRatio = metricsData[0]?.peRatio || 0;
         const debtToEquity = metricsData[0]?.debtToEquity || 0;
 
         const quoteResponse = await fetch(`https://financialmodelingprep.com/api/v3/quote/${ticker}?apikey=${FMP_API_KEY}`);
-        if (!quoteResponse.ok) throw new Error(`Quote API error: ${profileResponse.status}`);
+        if (!quoteResponse.ok) throw new Error(`Quote API error: ${quoteResponse.status}`);
         const quoteData = await quoteResponse.json();
         const currentPrice = quoteData[0]?.price || 0;
 
-        // Fetch historical prices using yfinance
-        await pyodide.runPythonAsync(`
-          import yfinance as yf
-          from datetime import datetime, timedelta
+        let todayPrice = 0;
+        let yesterdayPrice = 0;
+        let t7Price = 0;
+        let riskScoreToday = 7; // Default risk score if Pyodide fails
 
-          # Define dates
-          today = datetime.now()
-          yesterday = today - timedelta(days=1)
-          t7 = today - timedelta(days=7)
+        // Fetch historical prices using yfinance if Pyodide is available
+        if (pyodideReady && pyodide) {
+          await pyodide.runPythonAsync(`
+            import yfinance as yf
+            from datetime import datetime, timedelta
 
-          # Fetch historical data
-          stock = yf.Ticker("${ticker}")
-          hist = stock.history(start=t7 - timedelta(days=1), end=today + timedelta(days=1))
+            # Define dates
+            today = datetime.now()
+            yesterday = today - timedelta(days=1)
+            t7 = today - timedelta(days=7)
 
-          # Get closing prices for specific dates
-          hist.index = hist.index.tz_localize(None)  # Remove timezone for comparison
-          today_str = today.strftime('%Y-%m-%d')
-          yesterday_str = yesterday.strftime('%Y-%m-%d')
-          t7_str = t7.strftime('%Y-%m-%d')
+            # Fetch historical data
+            stock = yf.Ticker("${ticker}")
+            hist = stock.history(start=t7 - timedelta(days=1), end=today + timedelta(days=1))
 
-          today_price = hist['Close'].get(today_str, hist['Close'].iloc[-1])
-          yesterday_price = hist['Close'].get(yesterday_str, hist['Close'].iloc[-2] if len(hist) > 1 else hist['Close'].iloc[-1])
-          t7_price = hist['Close'].get(t7_str, hist['Close'].iloc[0] if len(hist) > 0 else hist['Close'].iloc[-1])
-        `);
-        const todayPrice = await pyodide.globals.get('today_price');
-        const yesterdayPrice = await pyodide.globals.get('yesterday_price');
-        const t7Price = await pyodide.globals.get('t7_price');
+            # Get closing prices for specific dates
+            hist.index = hist.index.tz_localize(None)  # Remove timezone for comparison
+            today_str = today.strftime('%Y-%m-%d')
+            yesterday_str = yesterday.strftime('%Y-%m-%d')
+            t7_str = t7.strftime('%Y-%m-%d')
 
-        // Use FMP price if yfinance fails
+            today_price = hist['Close'].get(today_str, hist['Close'].iloc[-1])
+            yesterday_price = hist['Close'].get(yesterday_str, hist['Close'].iloc[-2] if len(hist) > 1 else hist['Close'].iloc[-1])
+            t7_price = hist['Close'].get(t7_str, hist['Close'].iloc[0] if len(hist) > 0 else hist['Close'].iloc[-1])
+          `);
+          todayPrice = await pyodide.globals.get('today_price');
+          yesterdayPrice = await pyodide.globals.get('yesterday_price');
+          t7Price = await pyodide.globals.get('t7_price');
+
+          // Calculate risk score for today
+          await pyodide.runPythonAsync(`
+            def calculate_risk_score(beta, debt_to_equity, pe_ratio):
+                score = beta * 5
+                if debt_to_equity > 1:
+                    score += 5
+                if pe_ratio > 30:
+                    score += 3
+                return round(score, 2)
+          `);
+          riskScoreToday = await pyodide.runPythonAsync(`
+            calculate_risk_score(${beta}, ${debtToEquity}, ${peRatio})
+          `);
+        } else {
+          console.warn(`Pyodide is not initialized. Using fallback values for ${ticker}.`);
+        }
+
+        // Use FMP price if yfinance fails or Pyodide is not available
         const price = todayPrice > 0 ? todayPrice : currentPrice;
-
-        // Calculate risk score for today
-        await pyodide.runPythonAsync(`
-          def calculate_risk_score(beta, debt_to_equity, pe_ratio):
-              score = beta * 5
-              if debt_to_equity > 1:
-                  score += 5
-              if pe_ratio > 30:
-                  score += 3
-              return round(score, 2)
-        `);
-        const riskScoreToday = await pyodide.runPythonAsync(`
-          calculate_risk_score(${beta}, ${debtToEquity}, ${peRatio})
-        `);
 
         // Estimate historical risk scores based on price changes
         const yesterdayRiskScore = (riskScoreToday * (yesterdayPrice / todayPrice)).toFixed(2);
@@ -328,6 +345,11 @@
     analyzeVolatilityBtn.addEventListener('click', async () => {
       if (securityData.length === 0) {
         alert('Please fetch security data first by clicking "Fetch Security Data".');
+        return;
+      }
+
+      if (!pyodideReady || !pyodide) {
+        alert('Pyodide is not initialized. Volatility analysis is unavailable. Please try refreshing the page.');
         return;
       }
 
@@ -414,6 +436,11 @@
 
       if (securityData.length === 0) {
         alert('Please fetch security data first by clicking "Fetch Security Data".');
+        return;
+      }
+
+      if (!pyodideReady || !pyodide) {
+        alert('Pyodide is not initialized. Exposure calculation is unavailable. Please try refreshing the page.');
         return;
       }
 
@@ -570,6 +597,11 @@
         return;
       }
 
+      if (!pyodideReady || !pyodide) {
+        alert('Pyodide is not initialized. Simulation is unavailable. Please try refreshing the page.');
+        return;
+      }
+
       const entries = document.querySelectorAll('.ticker-entry');
       let weights = [];
       let totalWeight = 0;
@@ -598,7 +630,7 @@
         }
       });
 
-      // Normalize Weights (for both weight and FAMT inputs)
+      // Normalize Weights if Using FAMT
       if (totalFamt > 0) {
         weights = weights.map(w => ({
           riskScore: w.riskScore,
@@ -606,17 +638,14 @@
           weight: (w.famt / totalFamt) * 100
         }));
         totalWeight = 100;
-      } else if (totalWeight > 0) {
-        weights = weights.map(w => ({
-          riskScore: w.riskScore,
-          volatility: w.volatility,
-          weight: (w.weight / totalWeight) * 100
-        }));
-        totalWeight = 100;
       }
 
       if (totalWeight === 0) {
         alert('Please enter at least one valid ticker with a weight or FAMT.');
+        return;
+      }
+      if (totalWeight !== 100 && totalFamt === 0) {
+        alert('Total weight must equal 100%. Current total: ' + totalWeight + '%');
         return;
       }
 
@@ -701,5 +730,5 @@
       document.getElementById('simulationResults').classList.remove('hidden');
     });
   </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'931b05e139b6b05e',t:'MTc0NDg4MzQ3Ni4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
